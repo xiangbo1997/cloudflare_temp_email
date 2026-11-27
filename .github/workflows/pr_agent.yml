@@ -13,8 +13,11 @@ jobs:
       pull-requests: write
       contents: write
     name: Run pr agent on every pull request, respond to user comments
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || secrets.OPENAI_KEY }}
     steps:
       - name: PR Agent action step
+        if: env.OPENAI_API_KEY != ''
         id: pragent
         uses: qodo-ai/pr-agent@main
         env:

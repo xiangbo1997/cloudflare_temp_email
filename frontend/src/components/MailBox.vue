@@ -74,6 +74,9 @@ const {
 const autoRefreshInterval = ref(configAutoRefreshInterval.value)
 const rawData = ref([])
 const timer = ref(null)
+const fetching = ref(false)
+let refreshFailures = 0
+let automaticRefreshes = 0
 
 const count = ref(0)
 const page = ref(1)
@@ -183,11 +186,13 @@ const setupAutoRefresh = async (autoRefresh) => {
   if (autoRefresh) {
     clearInterval(timer.value);
     timer.value = setInterval(async () => {
-      if (loading.value) return;
+      if (loading.value || fetching.value || document.hidden) return;
       autoRefreshInterval.value--;
       if (autoRefreshInterval.value <= 0) {
         autoRefreshInterval.value = configAutoRefreshInterval.value;
-        await backFirstPageAndRefresh();
+        // 每五次自动刷新校准总数，其余跳过 COUNT 扫描。
+        await backFirstPageAndRefresh(++automaticRefreshes % 5 === 0);
+        autoRefreshInterval.value = Math.min(1800, Math.max(1, configAutoRefreshInterval.value) * 2 ** Math.min(refreshFailures, 8));
       }
     }, 1000)
   } else {
@@ -206,34 +211,44 @@ watch([page, pageSize], async ([page, pageSize], [oldPage, oldPageSize]) => {
   }
 })
 
-const refresh = async () => {
+const refresh = async (includeCount = true) => {
+  includeCount = includeCount !== false;
+  if (fetching.value) return;
+  fetching.value = true;
+  loading.value = true;
   try {
     const { results, count: totalCount } = await props.fetchMailData(
-      pageSize.value, (page.value - 1) * pageSize.value
+      pageSize.value, (page.value - 1) * pageSize.value, includeCount === true
     );
-    loading.value = true;
+    refreshFailures = 0;
     rawData.value = await Promise.all(results.map(async (item) => {
       item.checked = false;
       return await processItem(item);
     }));
-    if (totalCount > 0) {
+    if (includeCount === true && page.value === 1) {
       count.value = totalCount;
     }
+    count.value = Math.max(count.value, (page.value - 1) * pageSize.value + results.length);
     curMail.value = null;
     if (!isMobile.value && !mailListView.value && data.value.length > 0) {
       curMail.value = data.value[0];
     }
   } catch (error) {
+    refreshFailures++;
     message.error(error.message || "error");
     console.error(error);
   } finally {
+    fetching.value = false;
     loading.value = false;
   }
 };
 
-const backFirstPageAndRefresh = async () => {
-  page.value = 1;
-  await refresh();
+const backFirstPageAndRefresh = async (includeCount = true) => {
+  if (page.value !== 1) {
+    page.value = 1; // watcher 负责请求，避免重复刷新。
+    return;
+  }
+  await refresh(includeCount === false ? false : true);
 }
 
 const clickRow = (row) => {

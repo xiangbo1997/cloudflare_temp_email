@@ -29,6 +29,9 @@ const currentMail = ref(null)
 const showAccountSettingsCard = ref(false)
 const currentAutoRefreshInterval = ref(60)
 const timer = ref(null)
+const fetching = ref(false)
+let refreshFailures = 0
+let automaticRefreshes = 0
 
 const { t } = useScopedI18n('views.index.SimpleIndex')
 
@@ -43,16 +46,24 @@ const copyAddress = async () => {
 }
 
 // 获取邮件数据
-const fetchMails = async () => {
-    if (!settings.value.address) return
+const fetchMails = async (includeCount = true) => {
+    if (!settings.value.address || fetching.value) return false
+    fetching.value = true
     try {
-        const { results, count } = await api.fetch(`/api/mails?limit=1&offset=${currentPage.value - 1}`)
-        totalCount.value = count > 0 ? count : totalCount.value;
+        const { results, count } = await api.fetch(`/api/mails?limit=1&offset=${currentPage.value - 1}&include_count=${includeCount}`)
+        if (includeCount && currentPage.value === 1) totalCount.value = count;
+        totalCount.value = Math.max(totalCount.value, results.length ? currentPage.value : 0);
         const rawMail = results && results.length > 0 ? results[0] : null
         currentMail.value = rawMail ? await processItem(rawMail) : null
+        refreshFailures = 0
+        return true
     } catch (error) {
+        refreshFailures++
         console.error('Failed to fetch mails:', error)
         message.error('获取邮件失败')
+        return false
+    } finally {
+        fetching.value = false
     }
 }
 
@@ -91,11 +102,13 @@ const deleteMail = async () => {
 // 刷新邮件
 const refreshMails = async () => {
     if (loading.value) return
-    currentPage.value = 1
+    if (currentPage.value !== 1) {
+        currentPage.value = 1
+        return // watcher 负责请求。
+    }
     showAccountSettingsCard.value = false
     currentAutoRefreshInterval.value = 60
-    await fetchMails()
-    message.success(t('refreshSuccess'))
+    if (await fetchMails()) message.success(t('refreshSuccess'))
 }
 
 // 分页控制
@@ -128,13 +141,15 @@ onMounted(async () => {
 
     // 启动自动刷新
     timer.value = setInterval(async () => {
+        if (document.hidden || fetching.value || loading.value) return
         if (!isFirstPage.value) {
             currentAutoRefreshInterval.value = 60
             return
         }
 
         if (--currentAutoRefreshInterval.value <= 0) {
-            await refreshMails()
+            await fetchMails(++automaticRefreshes % 5 === 0)
+            currentAutoRefreshInterval.value = Math.min(1800, 60 * 2 ** Math.min(refreshFailures, 5))
         }
     }, 1000)
 })

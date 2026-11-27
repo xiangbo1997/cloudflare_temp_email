@@ -731,7 +731,7 @@ export const handleMailListQuery = async (
         ...params, limit, offset
     ).all();
     const resolvedResults = await resolveRawEmailList(results);
-    const count = offset == 0 ? await c.env.DB.prepare(
+    const count = offset == 0 && c.req.query("include_count") !== "false" ? await c.env.DB.prepare(
         countQuery
     ).bind(...params).first("count") : 0;
     return c.json({ results: resolvedResults, count });
